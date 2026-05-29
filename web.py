@@ -364,31 +364,212 @@ async def _apply_naukri(page, job: Job) -> dict:
 
 # ── LinkedIn ───────────────────────────────────────────────────
 
+# Mapping: keyword in question → years of experience to fill
+_SKILL_YEARS = {
+    "ruby": "1", "rails": "1", "ruby on rails": "1",
+    "angular": "1", "react": "1", "node": "1", "express": "1",
+    "javascript": "2", "typescript": "1",
+    "python": "1", "java": "1",
+    "postgresql": "1", "mysql": "1", "sql": "1", "mongodb": "1", "redis": "1",
+    "html": "2", "css": "2", "html and css": "2",
+    "aws": "1", "docker": "1", "git": "2", "github": "2", "linux": "1",
+    "rest": "1", "api": "1", "rest api": "1",
+    "software": "1", "development": "1", "engineering": "1",
+    "full stack": "1", "fullstack": "1", "backend": "1", "frontend": "1",
+    "web": "1", "programming": "2", "coding": "2",
+}
+
+
+async def _linkedin_fill_questions(page):
+    """Fill additional questions in LinkedIn Easy Apply forms."""
+    # LinkedIn puts form fields in the main frame — find inputs with labels
+    inputs = await page.query_selector_all("input")
+
+    for inp in inputs:
+        try:
+            input_type = await inp.get_attribute("type") or "text"
+            if input_type not in ("text", "number", ""):
+                continue
+
+            visible = await inp.is_visible()
+            if not visible:
+                continue
+
+            val = await inp.input_value()
+            if val:  # Already filled
+                continue
+
+            # Get label by walking up the DOM tree
+            label_text = await inp.evaluate("""el => {
+                let p = el.parentElement;
+                for (let i = 0; i < 5 && p; i++) {
+                    const labels = p.querySelectorAll('label, span, p');
+                    for (const l of labels) {
+                        const t = l.textContent.trim();
+                        if (t.length > 5 && t.length < 150) return t;
+                    }
+                    p = p.parentElement;
+                }
+                return el.getAttribute('aria-label') || el.placeholder || '';
+            }""")
+
+            if not label_text:
+                continue
+
+            label_lower = label_text.lower()
+
+            # "How many years of experience with X?"
+            if "year" in label_lower and ("experience" in label_lower or "work" in label_lower):
+                answer = "0"  # Default 0 if unknown skill
+                for skill, years in _SKILL_YEARS.items():
+                    if skill in label_lower:
+                        answer = years
+                        break
+                await inp.fill(answer)
+
+            # Expected CTC / salary
+            elif ("expected" in label_lower or "desired" in label_lower) and ("ctc" in label_lower or "salary" in label_lower):
+                await inp.fill("1800000")
+
+            # CTC / salary (generic — assume expected)
+            elif "ctc" in label_lower or "salary" in label_lower or "compensation" in label_lower:
+                await inp.fill("1800000")
+
+            # Notice period
+            elif "notice" in label_lower:
+                await inp.fill("30")
+
+            # Current CTC
+            elif "current" in label_lower and ("ctc" in label_lower or "salary" in label_lower or "compensation" in label_lower):
+                await inp.fill("1200000")
+
+            # Location
+            elif "city" in label_lower or "location" in label_lower:
+                await inp.fill("Gurugram")
+
+            # GPA / percentage
+            elif "gpa" in label_lower or "cgpa" in label_lower:
+                await inp.fill("9.44")
+
+            # LLM / AI tools question
+            elif "llm" in label_lower or "coding agent" in label_lower or "copilot" in label_lower or "cursor" in label_lower:
+                await inp.fill("1")
+
+            # Generic number question — default to 1
+            elif "how many" in label_lower:
+                await inp.fill("1")
+
+            # Any remaining empty required field with number validation — fill 1
+            else:
+                # Check if it expects a number
+                is_number = input_type == "number"
+                if not is_number:
+                    # Check for error messages nearby suggesting number input
+                    has_num_error = await inp.evaluate("""el => {
+                        const p = el.parentElement;
+                        if (!p) return false;
+                        return p.textContent.includes('number') || p.textContent.includes('decimal');
+                    }""")
+                    is_number = has_num_error
+                if is_number:
+                    await inp.fill("1")
+
+        except Exception:
+            continue
+
+    # Handle select dropdowns
+    selects = await page.query_selector_all("select")
+    for sel in selects:
+        try:
+            visible = await sel.is_visible()
+            if not visible:
+                continue
+            val = await sel.input_value()
+            if val:
+                continue
+
+            label_text = await sel.evaluate("""el => {
+                let p = el.parentElement;
+                for (let i = 0; i < 5 && p; i++) {
+                    const labels = p.querySelectorAll('label, span, p');
+                    for (const l of labels) {
+                        const t = l.textContent.trim();
+                        if (t.length > 5 && t.length < 150) return t;
+                    }
+                    p = p.parentElement;
+                }
+                return '';
+            }""")
+
+            label_lower = (label_text or "").lower()
+
+            # Get available options
+            options = await sel.query_selector_all("option")
+            option_texts = []
+            for opt in options:
+                txt = (await opt.inner_text()).strip()
+                if txt and txt != "Select an option":
+                    option_texts.append(txt)
+
+            if not option_texts:
+                continue
+
+            # Try preferred answers in order
+            selected = False
+            for preferred in ["Yes", "yes", "30 days", "1 month", "Immediately",
+                              "Less than 1 year", "1 year", "0-1 years", "1-2 years"]:
+                if preferred in option_texts:
+                    await sel.select_option(label=preferred)
+                    selected = True
+                    break
+
+            # If no preferred match, just select the first non-empty option
+            if not selected and option_texts:
+                await sel.select_option(label=option_texts[0])
+        except Exception:
+            continue
+
+
 async def _apply_linkedin(page, job: Job) -> dict:
     if "login" in page.url or "authwall" in page.url:
         return {"applied": False, "message": "LinkedIn login required"}
 
-    easy_apply = page.locator("[aria-label*='Easy Apply'], button.jobs-apply-button, button:has-text('Easy Apply'), a:has-text('Easy Apply')")
-    if await easy_apply.count() > 0:
-        await easy_apply.first.click()
-        await page.wait_for_timeout(3000)
+    # Scroll to top so Easy Apply button is in viewport
+    await page.evaluate("window.scrollTo(0, 0)")
+    await page.wait_for_timeout(1000)
 
-        for step in range(8):
-            await page.wait_for_timeout(1500)
+    # Find Easy Apply — could be <a> or <button>, use aria-label or text
+    easy_apply = page.locator("a[aria-label*='Easy Apply'], button[aria-label*='Easy Apply'], a:has-text('Easy Apply'), button:has-text('Easy Apply')")
 
-            # Success?
-            done = page.locator("text='Application sent', text='application was sent', text='Your application was sent'")
-            if await done.count() > 0:
-                return {"applied": True, "message": "Applied via LinkedIn Easy Apply"}
+    # Filter: only the one in the job detail area (visible in viewport, not in job list sidebar)
+    ea_count = await easy_apply.count()
+    if ea_count == 0:
+        # Check if it's an external "Apply" button (with external link icon)
+        external = page.locator("a[aria-label*='Apply on company'], a:has-text('Apply'):visible")
+        if await external.count() > 0:
+            return {"applied": False, "external": True, "message": "External apply — no Easy Apply"}
+        return {"applied": False, "external": True, "message": "No apply button found"}
 
-            # Submit?
-            submit = page.locator(
-                "button[aria-label*='Submit application'], "
-                "button:has-text('Submit application'), "
-                "button:has-text('Submit')"
-            )
-            if await submit.count() > 0:
-                await submit.first.click()
+    # Click the first visible Easy Apply
+    await easy_apply.first.click()
+    await page.wait_for_timeout(3000)
+
+    # Now step through the Easy Apply form
+    for step in range(8):
+        await page.wait_for_timeout(1500)
+
+        # Check for success
+        done = page.locator("text='Application sent', text='application was sent', text='Your application was sent'")
+        if await done.count() > 0:
+            return {"applied": True, "message": "Applied via LinkedIn Easy Apply"}
+
+        # Check for Submit button
+        submit = page.locator("button:has-text('Submit application'), button:has-text('Submit')")
+        submit_visible = False
+        for i in range(await submit.count()):
+            if await submit.nth(i).is_visible():
+                submit_visible = True
+                await submit.nth(i).click()
                 await page.wait_for_timeout(3000)
 
                 done = page.locator("text='Application sent', text='application was sent', text='Your application was sent'")
@@ -396,39 +577,66 @@ async def _apply_linkedin(page, job: Job) -> dict:
                     return {"applied": True, "message": "Applied via LinkedIn Easy Apply"}
                 return {"applied": True, "message": "Submitted on LinkedIn"}
 
-            # Upload resume
-            upload = page.locator("input[type='file']")
-            if await upload.count() > 0:
-                from config import RESUME_PDF_PATH
-                try:
-                    await upload.first.set_input_files(RESUME_PDF_PATH)
-                    await page.wait_for_timeout(1000)
-                except Exception:
-                    pass
+        if submit_visible:
+            break
 
-            # Fill phone
-            phone_input = page.locator("input[name*='phoneNumber'], input[aria-label*='Phone'], input[id*='phone']")
-            if await phone_input.count() > 0:
+        # Upload resume if asked
+        upload = page.locator("input[type='file']")
+        if await upload.count() > 0:
+            from config import RESUME_PDF_PATH
+            try:
+                await upload.first.set_input_files(RESUME_PDF_PATH)
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+        # Fill phone if empty
+        phone_input = page.locator("input[name*='phoneNumber'], input[aria-label*='Phone'], input[id*='phone']")
+        if await phone_input.count() > 0:
+            try:
                 val = await phone_input.first.input_value()
                 if not val:
-                    await phone_input.first.fill("+91-8864833148")
+                    await phone_input.first.fill("8864833148")
+            except Exception:
+                pass
 
-            # Next step
-            next_btn = page.locator(
-                "button[aria-label*='Continue'], button[aria-label*='Next'], "
-                "button[aria-label*='Review'], "
-                "button:has-text('Next'), button:has-text('Review'), button:has-text('Continue')"
-            )
-            if await next_btn.count() > 0:
-                await next_btn.first.click()
-            else:
+        # Fill additional questions (years of experience, etc.)
+        await _linkedin_fill_questions(page)
+
+        # Click Next/Continue/Review (find only visible ones)
+        clicked = False
+        for btn_text in ["Next", "Continue", "Review"]:
+            btn = page.locator(f"button:has-text('{btn_text}'):visible")
+            if await btn.count() > 0:
+                prev_url = page.url
+                await btn.first.click()
+                await page.wait_for_timeout(1500)
+                clicked = True
                 break
 
-        # Couldn't complete Easy Apply — mark as external so user can finish manually
-        return {"applied": False, "external": True, "message": "Easy Apply form needs manual input"}
+        if not clicked:
+            break
 
-    # No Easy Apply — external
-    return {"applied": False, "external": True, "message": "No Easy Apply — external link"}
+        # Detect if we're stuck (same step repeating — means validation errors)
+        if step > 0:
+            still_has_same_btn = False
+            for btn_text in ["Review"]:
+                btn = page.locator(f"button:has-text('{btn_text}'):visible")
+                if await btn.count() > 0:
+                    still_has_same_btn = True
+            # If Review is still showing after clicking it, we're stuck on questions
+            if still_has_same_btn and step >= 4:
+                return {"applied": False, "external": True, "message": "Easy Apply has additional questions — needs manual input"}
+
+    # Dismiss the modal if still open
+    dismiss = page.locator("button[aria-label*='Dismiss'], button:has-text('Dismiss')")
+    if await dismiss.count() > 0:
+        try:
+            await dismiss.first.click()
+        except Exception:
+            pass
+
+    return {"applied": False, "external": True, "message": "Easy Apply form incomplete — needs manual input"}
 
 
 # ── Instahyre ──────────────────────────────────────────────────

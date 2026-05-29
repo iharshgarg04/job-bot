@@ -21,7 +21,8 @@ FIELD_DATA = {
     "current_title": PROFILE["current_role"],
     "experience_years": "1",
     "salary_expected": "1800000",
-    "notice_period": "15 days",
+    "current_ctc": "1200000",
+    "notice_period": "30 days",
     "website": PROFILE["github"],
     "summary": PROFILE["summary"],
 }
