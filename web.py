@@ -388,15 +388,22 @@ async def _get_field_label(el) -> str:
             const labels = p.querySelectorAll('label, span, p');
             for (const l of labels) {
                 const t = l.textContent.trim();
-                if (t.length > 5 && t.length < 200) return t;
+                // Skip generic/nav labels, only return question-like text
+                if (t.length > 10 && t.length < 200 &&
+                    (t.includes('?') || t.includes('How') || t.includes('What') ||
+                     t.includes('Are you') || t.includes('Do you') || t.includes('years') ||
+                     t.includes('CTC') || t.includes('salary') || t.includes('notice') ||
+                     t.includes('experience'))) {
+                    return t;
+                }
             }
             p = p.parentElement;
         }
-        return el.getAttribute('aria-label') || el.placeholder || '';
+        return el.getAttribute('aria-label') || '';
     }""")
 
 
-def _get_predefined_answer(label: str, field_type: str) -> str | None:
+def _get_predefined_answer(label: str, field_type: str):
     """Try to answer from predefined knowledge. Returns None if unknown."""
     ll = label.lower()
 
@@ -407,7 +414,11 @@ def _get_predefined_answer(label: str, field_type: str) -> str | None:
                 return years
         return "0"
 
-    # Current CTC
+    # Notice period (check before CTC since "notice period" is specific)
+    if "notice" in ll:
+        return "30"
+
+    # Current CTC (check before generic CTC)
     if "current" in ll and ("ctc" in ll or "salary" in ll or "compensation" in ll):
         return "1200000"
 
@@ -418,10 +429,6 @@ def _get_predefined_answer(label: str, field_type: str) -> str | None:
     # Generic CTC/salary
     if "ctc" in ll or "salary" in ll or "compensation" in ll:
         return "1800000"
-
-    # Notice period
-    if "notice" in ll:
-        return "30"
 
     # Location
     if "city" in ll or "location" in ll:
@@ -547,11 +554,11 @@ async def _linkedin_fill_questions(page):
 
             label = await _get_field_label(sel)
 
-            # Get options
+            # Get options (strip whitespace/newlines from LinkedIn's markup)
             options = await sel.query_selector_all("option")
             option_texts = []
             for opt in options:
-                txt = (await opt.inner_text()).strip()
+                txt = " ".join((await opt.inner_text()).split()).strip()
                 if txt and "select" not in txt.lower():
                     option_texts.append(txt)
 
@@ -629,16 +636,23 @@ async def _apply_linkedin(page, job: Job) -> dict:
 
     # Click using JavaScript to prevent navigation (it's an <a> tag)
     await easy_apply.first.evaluate("el => el.click()")
-    await page.wait_for_timeout(4000)
+    await page.wait_for_timeout(5000)
 
-    # Check if modal opened — look for Next/Submit button (reliable indicator)
-    form_btn = page.locator("button:has-text('Next'):visible, button:has-text('Submit'):visible")
+    # Check if modal opened — look for Next/Submit button
+    form_btn = page.locator("button:has-text('Next'):visible, button:has-text('Submit'):visible, button:has-text('Review'):visible")
     if await form_btn.count() == 0:
-        # Modal didn't open — might have navigated away
-        if "search" in page.url:
-            await page.go_back()
-            await page.wait_for_timeout(3000)
-        return {"applied": False, "external": True, "message": "Easy Apply modal didn't open"}
+        # Try clicking normally as fallback
+        try:
+            await easy_apply.first.click()
+            await page.wait_for_timeout(5000)
+        except Exception:
+            pass
+
+        if await form_btn.count() == 0:
+            if "search" in page.url:
+                await page.go_back()
+                await page.wait_for_timeout(3000)
+            return {"applied": False, "external": True, "message": "Easy Apply modal didn't open"}
 
     # Now step through the Easy Apply form
     for step in range(8):
