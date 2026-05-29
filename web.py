@@ -380,141 +380,185 @@ _SKILL_YEARS = {
 }
 
 
+async def _get_field_label(el) -> str:
+    """Get the question/label text for a form element."""
+    return await el.evaluate("""el => {
+        let p = el.parentElement;
+        for (let i = 0; i < 6 && p; i++) {
+            const labels = p.querySelectorAll('label, span, p');
+            for (const l of labels) {
+                const t = l.textContent.trim();
+                if (t.length > 5 && t.length < 200) return t;
+            }
+            p = p.parentElement;
+        }
+        return el.getAttribute('aria-label') || el.placeholder || '';
+    }""")
+
+
+def _get_predefined_answer(label: str, field_type: str) -> str | None:
+    """Try to answer from predefined knowledge. Returns None if unknown."""
+    ll = label.lower()
+
+    # Years of experience with a skill
+    if "year" in ll and ("experience" in ll or "work" in ll):
+        for skill, years in _SKILL_YEARS.items():
+            if skill in ll:
+                return years
+        return "0"
+
+    # Current CTC
+    if "current" in ll and ("ctc" in ll or "salary" in ll or "compensation" in ll):
+        return "1200000"
+
+    # Expected CTC
+    if ("expected" in ll or "desired" in ll) and ("ctc" in ll or "salary" in ll):
+        return "1800000"
+
+    # Generic CTC/salary
+    if "ctc" in ll or "salary" in ll or "compensation" in ll:
+        return "1800000"
+
+    # Notice period
+    if "notice" in ll:
+        return "30"
+
+    # Location
+    if "city" in ll or "location" in ll:
+        return "Gurugram"
+
+    # GPA
+    if "gpa" in ll or "cgpa" in ll:
+        return "9.44"
+
+    # LLM / AI tools
+    if "llm" in ll or "coding agent" in ll or "copilot" in ll or "cursor" in ll or "claude" in ll:
+        return "1"
+
+    # Generic "how many"
+    if "how many" in ll:
+        return "1"
+
+    return None
+
+
+def _ask_claude_for_answers(questions: list[dict]) -> dict:
+    """Use Claude CLI to answer application questions we can't handle from predefined data."""
+    import subprocess
+    import json
+
+    questions_text = ""
+    for i, q in enumerate(questions):
+        questions_text += f"\n{i+1}. Question: \"{q['label']}\"\n"
+        questions_text += f"   Field type: {q['type']}\n"
+        if q.get("options"):
+            questions_text += f"   Options: {q['options']}\n"
+
+    prompt = f"""You are filling a job application form for this candidate:
+
+Name: Harsh Garg
+Role: Software Developer at Coding Ninjas (1 year experience)
+Skills: Ruby on Rails, Angular, PostgreSQL, Redis, AWS, JavaScript, TypeScript, Docker, React, Node.js, Python, Java
+Education: B.E. Computer Science, Chitkara University, CGPA 9.44/10
+Current CTC: 12 LPA | Expected: 18 LPA | Notice: 30 days
+Location: Gurugram, India
+LinkedIn: linkedin.com/in/harsh-garg04 | GitHub: github.com/iharshgarg04
+Uses AI tools: Claude Code, Cursor, GitHub Copilot
+
+Answer these application questions. Be positive and confident. For yes/no, prefer "Yes". For numbers, give realistic values.
+
+{questions_text}
+
+Return ONLY a JSON object mapping question number to answer:
+{{"1": "answer1", "2": "answer2"}}
+
+For select/dropdown questions, return the exact option text to select."""
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "text"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return {}
+
+        text = result.stdout.strip()
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+        return json.loads(text)
+    except Exception:
+        return {}
+
+
 async def _linkedin_fill_questions(page):
-    """Fill additional questions in LinkedIn Easy Apply forms."""
-    # LinkedIn puts form fields in the main frame — find inputs with labels
+    """Fill additional questions in LinkedIn Easy Apply forms. Uses Claude for unknown questions."""
+    unanswered = []  # Questions we need Claude for
+
+    # Pass 1: Fill inputs with predefined answers, collect unknowns
     inputs = await page.query_selector_all("input")
+    input_map = {}  # index → input element for Claude answers
 
     for inp in inputs:
         try:
             input_type = await inp.get_attribute("type") or "text"
             if input_type not in ("text", "number", ""):
                 continue
-
-            visible = await inp.is_visible()
-            if not visible:
+            if not await inp.is_visible():
                 continue
-
             val = await inp.input_value()
-            if val:  # Already filled
-                continue
-
-            # Get label by walking up the DOM tree
-            label_text = await inp.evaluate("""el => {
-                let p = el.parentElement;
-                for (let i = 0; i < 5 && p; i++) {
-                    const labels = p.querySelectorAll('label, span, p');
-                    for (const l of labels) {
-                        const t = l.textContent.trim();
-                        if (t.length > 5 && t.length < 150) return t;
-                    }
-                    p = p.parentElement;
-                }
-                return el.getAttribute('aria-label') || el.placeholder || '';
-            }""")
-
-            if not label_text:
-                continue
-
-            label_lower = label_text.lower()
-
-            # "How many years of experience with X?"
-            if "year" in label_lower and ("experience" in label_lower or "work" in label_lower):
-                answer = "0"  # Default 0 if unknown skill
-                for skill, years in _SKILL_YEARS.items():
-                    if skill in label_lower:
-                        answer = years
-                        break
-                await inp.fill(answer)
-
-            # Expected CTC / salary
-            elif ("expected" in label_lower or "desired" in label_lower) and ("ctc" in label_lower or "salary" in label_lower):
-                await inp.fill("1800000")
-
-            # CTC / salary (generic — assume expected)
-            elif "ctc" in label_lower or "salary" in label_lower or "compensation" in label_lower:
-                await inp.fill("1800000")
-
-            # Notice period
-            elif "notice" in label_lower:
-                await inp.fill("30")
-
-            # Current CTC
-            elif "current" in label_lower and ("ctc" in label_lower or "salary" in label_lower or "compensation" in label_lower):
-                await inp.fill("1200000")
-
-            # Location
-            elif "city" in label_lower or "location" in label_lower:
-                await inp.fill("Gurugram")
-
-            # GPA / percentage
-            elif "gpa" in label_lower or "cgpa" in label_lower:
-                await inp.fill("9.44")
-
-            # LLM / AI tools question
-            elif "llm" in label_lower or "coding agent" in label_lower or "copilot" in label_lower or "cursor" in label_lower:
-                await inp.fill("1")
-
-            # Generic number question — default to 1
-            elif "how many" in label_lower:
-                await inp.fill("1")
-
-            # Any remaining empty required field with number validation — fill 1
-            else:
-                # Check if it expects a number
-                is_number = input_type == "number"
-                if not is_number:
-                    # Check for error messages nearby suggesting number input
-                    has_num_error = await inp.evaluate("""el => {
-                        const p = el.parentElement;
-                        if (!p) return false;
-                        return p.textContent.includes('number') || p.textContent.includes('decimal');
-                    }""")
-                    is_number = has_num_error
-                if is_number:
-                    await inp.fill("1")
-
-        except Exception:
-            continue
-
-    # Handle select dropdowns
-    selects = await page.query_selector_all("select")
-    for sel in selects:
-        try:
-            visible = await sel.is_visible()
-            if not visible:
-                continue
-            val = await sel.input_value()
             if val:
                 continue
 
-            label_text = await sel.evaluate("""el => {
-                let p = el.parentElement;
-                for (let i = 0; i < 5 && p; i++) {
-                    const labels = p.querySelectorAll('label, span, p');
-                    for (const l of labels) {
-                        const t = l.textContent.trim();
-                        if (t.length > 5 && t.length < 150) return t;
-                    }
-                    p = p.parentElement;
-                }
-                return '';
-            }""")
+            label = await _get_field_label(inp)
+            if not label:
+                continue
 
-            label_lower = (label_text or "").lower()
+            answer = _get_predefined_answer(label, input_type)
+            if answer is not None:
+                await inp.fill(answer)
+            else:
+                # Collect for Claude
+                idx = len(unanswered) + 1
+                unanswered.append({"label": label, "type": input_type, "element_type": "input"})
+                input_map[str(idx)] = inp
+        except Exception:
+            continue
 
-            # Get available options
+    # Pass 1b: Fill select dropdowns with predefined answers, collect unknowns
+    selects = await page.query_selector_all("select")
+    select_map = {}
+
+    for sel in selects:
+        try:
+            if not await sel.is_visible():
+                continue
+
+            # Check if already has a non-default value
+            sel_text = await sel.evaluate("el => el.options[el.selectedIndex]?.text || ''")
+            if sel_text and "select" not in sel_text.lower():
+                continue
+
+            label = await _get_field_label(sel)
+
+            # Get options
             options = await sel.query_selector_all("option")
             option_texts = []
             for opt in options:
                 txt = (await opt.inner_text()).strip()
-                if txt and txt != "Select an option":
+                if txt and "select" not in txt.lower():
                     option_texts.append(txt)
 
             if not option_texts:
                 continue
 
-            # Try preferred answers in order
+            # Try predefined preferences
             selected = False
             for preferred in ["Yes", "yes", "30 days", "1 month", "Immediately",
                               "Less than 1 year", "1 year", "0-1 years", "1-2 years"]:
@@ -523,11 +567,37 @@ async def _linkedin_fill_questions(page):
                     selected = True
                     break
 
-            # If no preferred match, just select the first non-empty option
-            if not selected and option_texts:
-                await sel.select_option(label=option_texts[0])
+            if not selected:
+                # Collect for Claude
+                idx = len(unanswered) + 1
+                unanswered.append({"label": label, "type": "select", "options": option_texts, "element_type": "select"})
+                select_map[str(idx)] = (sel, option_texts)
         except Exception:
             continue
+
+    # Pass 2: Ask Claude for remaining unanswered questions
+    if unanswered:
+        print(f"  Asking Claude for {len(unanswered)} questions...")
+        claude_answers = _ask_claude_for_answers(unanswered)
+
+        for key, answer in claude_answers.items():
+            try:
+                if key in input_map:
+                    await input_map[key].fill(str(answer))
+                elif key in select_map:
+                    sel, opts = select_map[key]
+                    # Find closest matching option
+                    answer_lower = str(answer).lower()
+                    matched = False
+                    for opt in opts:
+                        if opt.lower() == answer_lower or answer_lower in opt.lower():
+                            await sel.select_option(label=opt)
+                            matched = True
+                            break
+                    if not matched and opts:
+                        await sel.select_option(label=opts[0])
+            except Exception:
+                continue
 
 
 async def _apply_linkedin(page, job: Job) -> dict:
@@ -635,14 +705,19 @@ async def _apply_linkedin(page, job: Job) -> dict:
 
         # Detect if we're stuck (same step repeating — means validation errors)
         if step > 0:
-            still_has_same_btn = False
+            still_review = False
             for btn_text in ["Review"]:
                 btn = page.locator(f"button:has-text('{btn_text}'):visible")
                 if await btn.count() > 0:
-                    still_has_same_btn = True
-            # If Review is still showing after clicking it, we're stuck on questions
-            if still_has_same_btn and step >= 4:
-                return {"applied": False, "external": True, "message": "Easy Apply has additional questions — needs manual input"}
+                    still_review = True
+
+            if still_review and step == 3:
+                # One more try: re-run question filler (Claude might answer differently)
+                print("  Retrying with Claude for unfilled questions...")
+                await _linkedin_fill_questions(page)
+                await page.wait_for_timeout(1000)
+            elif still_review and step >= 5:
+                return {"applied": False, "external": True, "message": "Easy Apply has questions Claude couldn't answer"}
 
     # Dismiss the modal if still open
     dismiss = page.locator("button[aria-label*='Dismiss'], button:has-text('Dismiss')")
