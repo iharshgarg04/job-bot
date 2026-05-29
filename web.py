@@ -538,21 +538,37 @@ async def _apply_linkedin(page, job: Job) -> dict:
     await page.evaluate("window.scrollTo(0, 0)")
     await page.wait_for_timeout(1000)
 
-    # Find Easy Apply — could be <a> or <button>, use aria-label or text
-    easy_apply = page.locator("a[aria-label*='Easy Apply'], button[aria-label*='Easy Apply'], a:has-text('Easy Apply'), button:has-text('Easy Apply')")
+    # Check if it's external apply (no Easy Apply)
+    page_text = await page.inner_text("body")
+    has_easy_apply = "Easy Apply" in page_text
 
-    # Filter: only the one in the job detail area (visible in viewport, not in job list sidebar)
+    if not has_easy_apply:
+        return {"applied": False, "external": True, "message": "No Easy Apply — external link"}
+
+    # Find Easy Apply button in viewport (top of page, job detail area)
+    easy_apply = page.locator("a[aria-label*='Easy Apply'], button[aria-label*='Easy Apply']")
     ea_count = await easy_apply.count()
-    if ea_count == 0:
-        # Check if it's an external "Apply" button (with external link icon)
-        external = page.locator("a[aria-label*='Apply on company'], a:has-text('Apply'):visible")
-        if await external.count() > 0:
-            return {"applied": False, "external": True, "message": "External apply — no Easy Apply"}
-        return {"applied": False, "external": True, "message": "No apply button found"}
 
-    # Click the first visible Easy Apply
-    await easy_apply.first.click()
-    await page.wait_for_timeout(3000)
+    if ea_count == 0:
+        # Try text-based
+        easy_apply = page.locator("a:has-text('Easy Apply'), button:has-text('Easy Apply')")
+        ea_count = await easy_apply.count()
+
+    if ea_count == 0:
+        return {"applied": False, "external": True, "message": "Easy Apply button not found"}
+
+    # Click using JavaScript to prevent navigation (it's an <a> tag)
+    await easy_apply.first.evaluate("el => el.click()")
+    await page.wait_for_timeout(4000)
+
+    # Check if modal opened — look for Next/Submit button (reliable indicator)
+    form_btn = page.locator("button:has-text('Next'):visible, button:has-text('Submit'):visible")
+    if await form_btn.count() == 0:
+        # Modal didn't open — might have navigated away
+        if "search" in page.url:
+            await page.go_back()
+            await page.wait_for_timeout(3000)
+        return {"applied": False, "external": True, "message": "Easy Apply modal didn't open"}
 
     # Now step through the Easy Apply form
     for step in range(8):
