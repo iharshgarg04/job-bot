@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Bot Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1e293b, #334155);
+            padding: 24px 40px;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #f1f5f9;
+        }
+        .header h1 span { color: #38bdf8; }
+        .header-actions { display: flex; gap: 12px; align-items: center; }
+        .stats {
+            display: flex;
+            gap: 24px;
+            padding: 20px 40px;
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+        }
+        .stat-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 16px 24px;
+            min-width: 140px;
+        }
+        .stat-card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+        .stat-card .value.blue { color: #38bdf8; }
+        .stat-card .value.green { color: #4ade80; }
+        .stat-card .value.yellow { color: #fbbf24; }
+        .stat-card .value.red { color: #f87171; }
+        .controls {
+            padding: 20px 40px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-success { background: #059669; color: white; }
+        .btn-success:hover { background: #047857; }
+        .btn-danger { background: #dc2626; color: white; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-outline {
+            background: transparent;
+            color: #94a3b8;
+            border: 1px solid #475569;
+        }
+        .btn-outline:hover { background: #1e293b; color: #e2e8f0; }
+        .btn-sm { padding: 6px 14px; font-size: 13px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .search-bar {
+            flex: 1;
+            max-width: 300px;
+            padding: 10px 16px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 14px;
+            outline: none;
+        }
+        .search-bar:focus { border-color: #2563eb; }
+        .filter-group { display: flex; gap: 8px; margin-left: auto; }
+        .filter-btn {
+            padding: 6px 14px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #94a3b8;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .filter-btn.active { background: #2563eb; border-color: #2563eb; color: white; }
+        .table-container {
+            padding: 0 40px 40px;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        }
+        thead th {
+            padding: 14px 16px;
+            text-align: left;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #94a3b8;
+            background: #0f172a;
+            border-bottom: 1px solid #334155;
+            position: sticky;
+            top: 0;
+        }
+        thead th.check { width: 40px; }
+        tbody tr {
+            transition: background 0.15s;
+        }
+        tbody tr:hover { background: #334155; }
+        tbody tr.applied { background: rgba(4, 120, 87, 0.08); }
+        tbody tr.external { background: rgba(251, 191, 36, 0.06); }
+        tbody tr.rejected { background: rgba(185, 28, 28, 0.08); opacity: 0.5; }
+        tbody td {
+            padding: 14px 16px;
+            font-size: 14px;
+            border-bottom: 1px solid #1e293b;
+            vertical-align: middle;
+        }
+        .job-title {
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+        .job-title a {
+            color: #38bdf8;
+            text-decoration: none;
+        }
+        .job-title a:hover { text-decoration: underline; }
+        .company { color: #cbd5e1; }
+        .location { color: #94a3b8; font-size: 13px; }
+        .source-badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .source-linkedin { background: #1e3a5f; color: #38bdf8; }
+        .source-indeed { background: #3b1f5e; color: #c084fc; }
+        .source-naukri { background: #1a3a2a; color: #4ade80; }
+        .source-instahyre { background: #3b2f1a; color: #fbbf24; }
+        .source-wellfound { background: #3b1a1a; color: #f87171; }
+        .source-foundit { background: #1a2f3b; color: #67e8f9; }
+        .score-bar {
+            width: 60px;
+            height: 8px;
+            background: #334155;
+            border-radius: 4px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        .score-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .score-high { background: #4ade80; }
+        .score-mid { background: #fbbf24; }
+        .score-low { background: #f87171; }
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-matched { background: #1e293b; color: #94a3b8; border: 1px solid #475569; }
+        .status-approved { background: #064e3b; color: #4ade80; }
+        .status-applied { background: #1e3a5f; color: #38bdf8; }
+        .status-rejected { background: #3b1a1a; color: #f87171; }
+        .status-external { background: #3b2f1a; color: #fbbf24; }
+        .status-apply_failed { background: #3b1a1a; color: #f87171; }
+        .actions { display: flex; gap: 6px; }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 24px;
+            background: #059669;
+            color: white;
+            border-radius: 10px;
+            font-weight: 600;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.error { background: #dc2626; }
+        .checkbox {
+            width: 18px;
+            height: 18px;
+            accent-color: #2563eb;
+            cursor: pointer;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #64748b;
+        }
+        .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: #94a3b8; }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .match-reason {
+            font-size: 12px;
+            color: #64748b;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @media (max-width: 768px) {
+            .header, .stats, .controls, .table-container { padding-left: 16px; padding-right: 16px; }
+            .stats { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>Job</span>Bot Dashboard</h1>
+        <div class="header-actions">
+            <button class="btn btn-outline" onclick="refreshJobs()">
+                Refresh Jobs
+            </button>
+            <button class="btn btn-primary" onclick="scanNewJobs()">
+                Scan New Jobs
+            </button>
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <div class="label">Total</div>
+            <div class="value blue" id="stat-total">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">New</div>
+            <div class="value yellow" id="stat-matched">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Applied</div>
+            <div class="value green" id="stat-applied">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">External</div>
+            <div class="value yellow" id="stat-external">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Rejected</div>
+            <div class="value red" id="stat-rejected">0</div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn btn-success" id="btn-apply-all" onclick="applyAll()">
+            Apply to All Selected
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="rejectAll()">Skip All Unchecked</button>
+        <input type="text" class="search-bar" placeholder="Search jobs..." oninput="filterJobs(this.value)" id="search-input">
+        <div class="filter-group">
+            <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+            <button class="filter-btn" onclick="setFilter('new', this)">New</button>
+            <button class="filter-btn" onclick="setFilter('approved', this)">Approved</button>
+            <button class="filter-btn" onclick="setFilter('applied', this)">Applied</button>
+            <button class="filter-btn" onclick="setFilter('external', this)">External</button>
+            <button class="filter-btn" onclick="setFilter('rejected', this)">Rejected</button>
+        </div>
+        <div class="filter-group" id="platform-filters">
+            <button class="filter-btn active" onclick="setPlatform('all', this)">All Platforms</button>
+            <button class="filter-btn" onclick="setPlatform('naukri', this)">Naukri</button>
+            <button class="filter-btn" onclick="setPlatform('linkedin', this)">LinkedIn</button>
+            <button class="filter-btn" onclick="setPlatform('instahyre', this)">Instahyre</button>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th class="check"><input type="checkbox" class="checkbox" onchange="toggleSelectAll(this)"></th>
+                    <th>Score</th>
+                    <th>Job Title</th>
+                    <th>Company</th>
+                    <th>Location</th>
+                    <th>Source</th>
+                    <th>Match Reason</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="jobs-table">
+            </tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">
+            <h3>No jobs found</h3>
+            <p>Click "Scan New Jobs" to start searching</p>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let jobs = [];
+        let currentFilter = 'all';
+        let currentPlatform = 'all';
+        let searchQuery = '';
+
+        async function loadJobs() {
+            const res = await fetch('/api/jobs');
+            jobs = await res.json();
+            renderJobs();  // Preserves current filter/platform selection
+            updateStats();
+        }
+
+        function renderJobs() {
+            const tbody = document.getElementById('jobs-table');
+            const empty = document.getElementById('empty-state');
+
+            let filtered = jobs;
+            if (currentFilter === 'new') {
+                filtered = filtered.filter(j => j.status === 'matched');
+            } else if (currentFilter !== 'all') {
+                filtered = filtered.filter(j => j.status === currentFilter);
+            }
+            if (currentPlatform !== 'all') {
+                filtered = filtered.filter(j => j.source === currentPlatform);
+            }
+            if (searchQuery) {
+                const q = searchQuery.toLowerCase();
+                filtered = filtered.filter(j =>
+                    j.title.toLowerCase().includes(q) ||
+                    j.company.toLowerCase().includes(q) ||
+                    j.location.toLowerCase().includes(q) ||
+                    j.skills.join(' ').toLowerCase().includes(q)
+                );
+            }
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            tbody.innerHTML = filtered.map((job, i) => {
+                const scoreClass = job.match_score >= 70 ? 'score-high' : job.match_score >= 50 ? 'score-mid' : 'score-low';
+                const sourceClass = `source-${job.source}`;
+                const statusClass = `status-${job.status}`;
+                const rowClass = job.status === 'applied' ? 'applied' : job.status === 'external' ? 'external' : job.status === 'rejected' ? 'rejected' : '';
+
+                return `<tr class="${rowClass}" data-idx="${jobs.indexOf(job)}">
+                    <td><input type="checkbox" class="checkbox job-check" data-idx="${jobs.indexOf(job)}" ${job.status === 'matched' || job.status === 'approved' ? 'checked' : ''}></td>
+                    <td>
+                        <div class="score-bar"><div class="score-fill ${scoreClass}" style="width:${job.match_score}%"></div></div>
+                        <span style="font-weight:600">${Math.round(job.match_score)}</span>
+                    </td>
+                    <td class="job-title"><a href="${job.url}" target="_blank">${job.title}</a></td>
+                    <td class="company">${job.company}</td>
+                    <td class="location">${job.location}</td>
+                    <td><span class="source-badge ${sourceClass}">${job.source}</span></td>
+                    <td class="match-reason" title="${job.match_reason || ''}">${job.match_reason || '-'}</td>
+                    <td><span class="status-badge ${statusClass}">${job.status}</span></td>
+                    <td class="actions">
+                        ${job.status === 'applied' ? `<span style="color:#4ade80;font-weight:600">Applied</span>`
+                        : job.status === 'external' ? `
+                            <a href="${job.url}" target="_blank" class="btn btn-primary btn-sm">Open</a>
+                            <button class="btn btn-success btn-sm" onclick="markApplied(${jobs.indexOf(job)})">Mark Applied</button>
+                        ` : `
+                            <button class="btn btn-primary btn-sm" onclick="applyJob(${jobs.indexOf(job)})">Apply</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectJob(${jobs.indexOf(job)})">Skip</button>
+                        `}
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function updateStats() {
+            document.getElementById('stat-total').textContent = jobs.length;
+            document.getElementById('stat-matched').textContent = jobs.filter(j => j.status === 'matched' || j.status === 'approved').length;
+            document.getElementById('stat-applied').textContent = jobs.filter(j => j.status === 'applied').length;
+            document.getElementById('stat-external').textContent = jobs.filter(j => j.status === 'external').length;
+            document.getElementById('stat-rejected').textContent = jobs.filter(j => j.status === 'rejected').length;
+        }
+
+        async function approveJob(idx) {
+            const res = await fetch(`/api/jobs/${idx}/approve`, { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                jobs[idx].status = 'approved';
+                renderJobs();
+                updateStats();
+                showToast(`Approved: ${jobs[idx].title}`);
+            }
+        }
+
+        async function rejectJob(idx) {
+            const res = await fetch(`/api/jobs/${idx}/reject`, { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                jobs[idx].status = 'rejected';
+                renderJobs();
+                updateStats();
+                showToast(`Rejected: ${jobs[idx].title}`, true);
+            }
+        }
+
+        async function applyJob(idx) {
+            const btn = event.target;
+            const job = jobs[idx];
+            btn.innerHTML = '<span class="spinner"></span> Applying...';
+            btn.disabled = true;
+
+            const res = await fetch(`/api/jobs/${idx}/apply`, { method: 'POST' });
+            const data = await res.json();
+
+            if (data.ok && data.applied) {
+                showToast(`Auto-applied: ${job.title} @ ${job.company}`);
+            } else if (data.ok && data.external) {
+                // External — open in browser, user applies manually
+                window.open(data.url || job.url, '_blank');
+                showToast(`External: ${job.company} — apply in that tab, then click "Mark Applied"`);
+            } else if (data.ok && !data.applied) {
+                showToast(`Failed: ${data.message}`, true);
+            } else {
+                showToast(`Error: ${data.error || 'Unknown error'}`, true);
+            }
+
+            btn.innerHTML = 'Apply';
+            btn.disabled = false;
+            await loadJobs();
+        }
+
+        async function markApplied(idx) {
+            const res = await fetch(`/api/jobs/${idx}/mark-applied`, { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                jobs[idx].status = 'applied';
+                showToast(`Marked as applied: ${jobs[idx].title} @ ${jobs[idx].company}`);
+                renderJobs();
+                updateStats();
+            }
+        }
+
+        async function applyAll() {
+            const selected = document.querySelectorAll('.job-check:checked');
+            if (selected.length === 0) {
+                showToast('No jobs selected! Use checkboxes to select jobs first.', true);
+                return;
+            }
+
+            const indices = Array.from(selected).map(cb => parseInt(cb.dataset.idx));
+            const unapplied = indices.filter(idx => jobs[idx].status !== 'applied');
+
+            if (unapplied.length === 0) {
+                showToast('All selected jobs are already applied!', true);
+                return;
+            }
+
+            if (!confirm(`Auto-apply to ${unapplied.length} jobs?\n\nDirect apply → auto-applied\nExternal sites → moved to "External" tab for manual apply`)) return;
+
+            const btn = document.getElementById('btn-apply-all');
+            btn.innerHTML = '<span class="spinner"></span> Applying... (this may take a while)';
+            btn.disabled = true;
+
+            const res = await fetch('/api/jobs/apply-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ indices: unapplied })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                const autoCount = data.applied.length;
+                const extCount = (data.external || []).length;
+                const failCount = (data.failed || []).length;
+
+                let msg = '';
+                if (autoCount) msg += `Applied: ${autoCount}`;
+                if (extCount) msg += `${msg ? ' | ' : ''}External: ${extCount}`;
+                if (failCount) msg += `${msg ? ' | ' : ''}Failed: ${failCount}`;
+                showToast(msg || 'Done!');
+            } else {
+                showToast(`Error: ${data.error}`, true);
+            }
+
+            btn.innerHTML = 'Apply to All Selected';
+            btn.disabled = false;
+            await loadJobs();
+        }
+
+        function approveAll() {
+            const visible = document.querySelectorAll('.job-check');
+            const indices = Array.from(visible).map(cb => parseInt(cb.dataset.idx));
+            fetch('/api/jobs/approve-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ indices })
+            }).then(r => r.json()).then(data => {
+                if (data.ok) {
+                    indices.forEach(idx => {
+                        if (jobs[idx].status !== 'applied') jobs[idx].status = 'approved';
+                    });
+                    renderJobs();
+                    updateStats();
+                    showToast(`Approved ${data.count} jobs`);
+                }
+            });
+        }
+
+        function rejectAll() {
+            const unchecked = document.querySelectorAll('.job-check:not(:checked)');
+            const indices = Array.from(unchecked).map(cb => parseInt(cb.dataset.idx));
+            fetch('/api/jobs/reject-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ indices })
+            }).then(r => r.json()).then(data => {
+                if (data.ok) {
+                    indices.forEach(idx => {
+                        if (jobs[idx].status !== 'applied' && jobs[idx].status !== 'approved') {
+                            jobs[idx].status = 'rejected';
+                        }
+                    });
+                    renderJobs();
+                    updateStats();
+                    showToast(`Rejected ${data.count} jobs`);
+                }
+            });
+        }
+
+        async function scanNewJobs() {
+            const btn = event.target;
+            btn.innerHTML = '<span class="spinner"></span> Scanning...';
+            btn.disabled = true;
+            showToast('Scanning all platforms... this takes ~30 seconds');
+
+            const res = await fetch('/api/scan', { method: 'POST' });
+            const data = await res.json();
+            btn.innerHTML = 'Scan New Jobs';
+            btn.disabled = false;
+
+            if (data.ok) {
+                showToast(`Found ${data.total_scraped} jobs, ${data.matched} matched!`);
+                loadJobs();
+            } else {
+                showToast(`Scan error: ${data.error}`, true);
+            }
+        }
+
+        function refreshJobs() { loadJobs(); }
+
+        function toggleSelectAll(el) {
+            document.querySelectorAll('.job-check').forEach(cb => cb.checked = el.checked);
+        }
+
+        function filterJobs(query) {
+            searchQuery = query;
+            renderJobs();
+        }
+
+        function setFilter(filter, btn) {
+            currentFilter = filter;
+            btn.parentElement.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderJobs();
+        }
+
+        function setPlatform(platform, btn) {
+            currentPlatform = platform;
+            btn.parentElement.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderJobs();
+        }
+
+        function showToast(msg, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = 'toast show' + (isError ? ' error' : '');
+            setTimeout(() => toast.className = 'toast', 3000);
+        }
+
+        // Load on page load
+        loadJobs();
+    </script>
+</body>
+</html>

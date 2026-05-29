@@ -1,0 +1,10 @@
+.browser-data/
+.browser-data-instahyre/
+.chrome-profile/
+.env
+__pycache__/
+*.pyc
+matched_jobs.json
+applications.csv
+*.png
+SingletonLock
