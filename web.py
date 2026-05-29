@@ -622,20 +622,21 @@ async def _apply_linkedin(page, job: Job) -> dict:
     if not has_easy_apply:
         return {"applied": False, "external": True, "message": "No Easy Apply — external link"}
 
-    # Find Easy Apply button in viewport (top of page, job detail area)
-    easy_apply = page.locator("a[aria-label*='Easy Apply'], button[aria-label*='Easy Apply']")
+    # Find the RIGHT PANEL Easy Apply button specifically
+    # It has aria-label="Easy Apply to [Job Title] at [Company]"
+    easy_apply = page.locator("[aria-label^='Easy Apply to']")
     ea_count = await easy_apply.count()
 
     if ea_count == 0:
-        # Try text-based
-        easy_apply = page.locator("a:has-text('Easy Apply'), button:has-text('Easy Apply')")
+        # Fallback: find any Easy Apply link/button that's NOT in the left panel job list
+        easy_apply = page.locator("a[aria-label*='Easy Apply'], button[aria-label*='Easy Apply']")
         ea_count = await easy_apply.count()
 
     if ea_count == 0:
         return {"applied": False, "external": True, "message": "Easy Apply button not found"}
 
-    # Click using JavaScript to prevent navigation (it's an <a> tag)
-    await easy_apply.first.evaluate("el => el.click()")
+    # Click the LAST one (right panel is always after left panel in DOM order)
+    await easy_apply.last.evaluate("el => el.click()")
     await page.wait_for_timeout(5000)
 
     # Check if modal opened — look for Next/Submit button
