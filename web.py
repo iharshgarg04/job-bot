@@ -388,18 +388,20 @@ async def _get_field_label(el) -> str:
             const labels = p.querySelectorAll('label, span, p');
             for (const l of labels) {
                 const t = l.textContent.trim();
-                // Skip generic/nav labels, only return question-like text
-                if (t.length > 10 && t.length < 200 &&
-                    (t.includes('?') || t.includes('How') || t.includes('What') ||
-                     t.includes('Are you') || t.includes('Do you') || t.includes('years') ||
-                     t.includes('CTC') || t.includes('salary') || t.includes('notice') ||
-                     t.includes('experience'))) {
+                // Return any text that looks like a form label/question
+                // Skip very short or very long text, and common nav items
+                if (t.length > 3 && t.length < 200) {
+                    const lower = t.toLowerCase();
+                    // Skip known non-label text
+                    if (lower === 'search' || lower === 'home' || lower === 'jobs' ||
+                        lower === 'messaging' || lower === 'notifications' ||
+                        lower === 'easy apply' || lower === 'save') continue;
                     return t;
                 }
             }
             p = p.parentElement;
         }
-        return el.getAttribute('aria-label') || '';
+        return el.getAttribute('aria-label') || el.placeholder || '';
     }""")
 
 
@@ -431,7 +433,7 @@ def _get_predefined_answer(label: str, field_type: str):
         return "1800000"
 
     # Location
-    if "city" in ll or "location" in ll:
+    if "city" in ll or "location" in ll or "where" in ll or "address" in ll or "residing" in ll:
         return "Gurugram"
 
     # GPA
@@ -615,11 +617,12 @@ async def _apply_linkedin(page, job: Job) -> dict:
     await page.evaluate("window.scrollTo(0, 0)")
     await page.wait_for_timeout(1000)
 
-    # Check if it's external apply (no Easy Apply)
+    # Check if job still exists or is expired
     page_text = await page.inner_text("body")
-    has_easy_apply = "Easy Apply" in page_text
+    if "Unable to load" in page_text or "no longer available" in page_text or "has been removed" in page_text:
+        return {"applied": False, "message": "Job expired/removed"}
 
-    if not has_easy_apply:
+    if "Easy Apply" not in page_text:
         return {"applied": False, "external": True, "message": "No Easy Apply — external link"}
 
     # Find the RIGHT PANEL Easy Apply button specifically
