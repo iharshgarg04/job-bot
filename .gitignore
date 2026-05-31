@@ -8,3 +8,4 @@ matched_jobs.json
 applications.csv
 *.png
 SingletonLock
+venv
