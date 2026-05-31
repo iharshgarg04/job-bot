@@ -1,217 +1,122 @@
-"""Referral finder — finds employees at target companies and generates referral request messages."""
+"""Referral helper — generates LinkedIn search links and personalized messages."""
 
-import asyncio
 import subprocess
-import json
-from dataclasses import dataclass, field, asdict
-from profile import PROFILE
+from dataclasses import dataclass, asdict
 
 
 @dataclass
-class ReferralContact:
-    name: str
-    title: str
-    company: str
-    linkedin_url: str
-    connection_degree: str = ""  # "1st", "2nd", "3rd"
-    mutual_connections: int = 0
-    is_alumni: bool = False
-    is_same_company: bool = False
-    is_recruiter: bool = False
-    message: str = ""
-    status: str = "found"  # found, message_sent, responded, referred
+class ReferralStrategy:
+    label: str
+    search_url: str
+    message_template: str
 
     def to_dict(self):
         return asdict(self)
 
 
-async def find_referrals(page, company: str, job_title: str, max_results: int = 5) -> list[ReferralContact]:
-    """Search LinkedIn for employees at a company who could give referrals."""
-    contacts = []
+def get_referral_strategies(company: str, job_title: str) -> list[dict]:
+    """Generate referral search links and messages for a company.
 
-    # Strategy 1: Search for alumni at the company
-    alumni_contacts = await _search_linkedin_people(
-        page, company, extra_filter="Chitkara", priority="alumni"
-    )
-    contacts.extend(alumni_contacts)
+    Instead of scraping (unreliable), we give the user:
+    1. Direct LinkedIn search URLs (open in browser, find people yourself)
+    2. Claude-generated personalized messages ready to copy-paste
+    """
+    company_encoded = company.replace(" ", "%20")
 
-    # Strategy 2: Search for people from Coding Ninjas who moved to that company
-    cn_contacts = await _search_linkedin_people(
-        page, company, extra_filter="Coding Ninjas", priority="ex-colleague"
-    )
-    contacts.extend(cn_contacts)
+    strategies = [
+        {
+            "label": "Chitkara Alumni at this company",
+            "description": "Find fellow Chitkara University alumni who work here",
+            "search_url": f"https://www.linkedin.com/search/results/people/?keywords={company_encoded}&schoolFilter=%5B%22Chitkara%20University%22%5D",
+            "message": "",
+            "priority": 1,
+        },
+        {
+            "label": "Coding Ninjas colleagues who moved here",
+            "description": "Find ex-Coding Ninjas people now at this company",
+            "search_url": f"https://www.linkedin.com/search/results/people/?keywords={company_encoded}%20%22Coding%20Ninjas%22",
+            "message": "",
+            "priority": 2,
+        },
+        {
+            "label": "Company employees page",
+            "description": "Browse all employees — filter by Engineering",
+            "search_url": f"https://www.linkedin.com/company/{company.lower().replace(' ', '-')}/people/",
+            "message": "",
+            "priority": 3,
+        },
+        {
+            "label": "Engineers & Developers",
+            "description": "Software engineers at this company",
+            "search_url": f"https://www.linkedin.com/search/results/people/?keywords={company_encoded}%20software%20engineer&origin=GLOBAL_SEARCH_HEADER",
+            "message": "",
+            "priority": 4,
+        },
+        {
+            "label": "Recruiters & HR",
+            "description": "People who handle hiring here",
+            "search_url": f"https://www.linkedin.com/search/results/people/?keywords={company_encoded}%20recruiter%20hiring&origin=GLOBAL_SEARCH_HEADER",
+            "message": "",
+            "priority": 5,
+        },
+    ]
 
-    # Strategy 3: Search for recruiters/HR at the company
-    recruiter_contacts = await _search_linkedin_people(
-        page, company, extra_filter="recruiter OR hiring OR talent", priority="recruiter"
-    )
-    contacts.extend(recruiter_contacts)
+    # Generate messages using Claude
+    messages = _generate_messages(company, job_title)
 
-    # Strategy 4: General employees (engineers/developers)
-    if len(contacts) < max_results:
-        dev_contacts = await _search_linkedin_people(
-            page, company, extra_filter="software engineer OR developer", priority="employee"
-        )
-        contacts.extend(dev_contacts)
+    for i, strategy in enumerate(strategies):
+        if i < len(messages):
+            strategy["message"] = messages[i]
 
-    # Deduplicate by LinkedIn URL
-    seen = set()
-    unique = []
-    for c in contacts:
-        if c.linkedin_url not in seen:
-            seen.add(c.linkedin_url)
-            unique.append(c)
-
-    # Sort: alumni first, then ex-colleagues, then recruiters, then employees
-    priority_order = {"alumni": 0, "ex-colleague": 1, "recruiter": 2, "employee": 3}
-    unique.sort(key=lambda c: (
-        priority_order.get("alumni" if c.is_alumni else "ex-colleague" if c.is_same_company else "recruiter" if c.is_recruiter else "employee", 3),
-        -c.mutual_connections,
-    ))
-
-    # Generate personalized messages for top contacts
-    for contact in unique[:max_results]:
-        contact.message = _generate_referral_message(contact, company, job_title)
-
-    return unique[:max_results]
-
-
-async def _search_linkedin_people(page, company: str, extra_filter: str = "", priority: str = "employee") -> list[ReferralContact]:
-    """Search LinkedIn People for employees at a company."""
-    contacts = []
-
-    query = f"{company} {extra_filter}".strip()
-    search_url = f"https://www.linkedin.com/search/results/people/?keywords={query.replace(' ', '%20')}&origin=GLOBAL_SEARCH_HEADER"
-
-    try:
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(4000)
-
-        # Extract people from search results
-        people = await page.evaluate("""() => {
-            const results = [];
-            const seen = new Set();
-
-            // Find all profile links
-            const profileLinks = document.querySelectorAll('a[href*="/in/"]');
-            for (const link of profileLinks) {
-                const href = link.getAttribute('href').split('?')[0];
-                if (seen.has(href)) continue;
-
-                const nameEl = link.querySelector('span[aria-hidden="true"]');
-                if (!nameEl) continue;
-
-                const name = nameEl.textContent.trim();
-                if (!name || name.length < 3 || name === 'LinkedIn Member') continue;
-
-                seen.add(href);
-
-                // Walk up to find the card container and get title/subtitle
-                let title = '';
-                let mutualCount = 0;
-                let degree = '';
-                let card = link.closest('li') || link.closest('div');
-                if (card) {
-                    const allText = card.textContent;
-                    // Get subtitle (usually role + company)
-                    const spans = card.querySelectorAll('div, p, span');
-                    for (const s of spans) {
-                        const t = s.textContent.trim();
-                        if (t.length > 10 && t.length < 120 && t !== name &&
-                            !t.includes('mutual') && !t.includes('Connect') &&
-                            !t.includes('recent entity') && !t.includes('history') &&
-                            !t.includes('Message') && !t.includes('Follow')) {
-                            if (!title) title = t;
-                        }
-                    }
-                    // Get mutual connections
-                    const mutualMatch = allText.match(/(\\d+)\\s*mutual/);
-                    if (mutualMatch) mutualCount = parseInt(mutualMatch[1]);
-                    // Get degree
-                    if (allText.includes('1st')) degree = '1st';
-                    else if (allText.includes('2nd')) degree = '2nd';
-                    else if (allText.includes('3rd')) degree = '3rd';
-                }
-
-                results.push({ name, title, url: href, degree, mutualCount });
-            }
-            return results;
-        }""")
-
-        for p in people[:5]:
-            is_alumni = "chitkara" in p.get("title", "").lower() or priority == "alumni"
-            is_same_co = "coding ninjas" in p.get("title", "").lower() or priority == "ex-colleague"
-            is_recruiter = any(kw in p.get("title", "").lower() for kw in ["recruiter", "hiring", "talent", "hr ", "human resource"])
-
-            contact = ReferralContact(
-                name=p["name"],
-                title=p.get("title", "")[:100],
-                company=company,
-                linkedin_url=f"https://www.linkedin.com{p['url']}" if p["url"].startswith("/") else p["url"],
-                connection_degree=p.get("degree", ""),
-                mutual_connections=p.get("mutualCount", 0),
-                is_alumni=is_alumni,
-                is_same_company=is_same_co,
-                is_recruiter=is_recruiter,
-            )
-            contacts.append(contact)
-
-    except Exception as e:
-        print(f"  [referral] Error searching {company}: {e}")
-
-    return contacts
+    return strategies
 
 
-def _generate_referral_message(contact: ReferralContact, company: str, job_title: str) -> str:
-    """Use Claude to generate a personalized referral request message."""
-    context = ""
-    if contact.is_alumni:
-        context = f"We're both from Chitkara University."
-    elif contact.is_same_company:
-        context = f"We both worked at Coding Ninjas."
-    elif contact.is_recruiter:
-        context = f"You're hiring at {company}."
-    elif contact.mutual_connections > 0:
-        context = f"We have {contact.mutual_connections} mutual connections."
+def _generate_messages(company: str, job_title: str) -> list[str]:
+    """Use Claude to generate 5 referral messages for different scenarios."""
+    prompt = f"""Generate 5 SHORT LinkedIn connection request messages (each UNDER 200 characters) for asking referrals.
 
-    prompt = f"""Write a SHORT LinkedIn connection request message (under 200 characters) asking for a referral.
+Candidate: Harsh Garg, Software Developer at Coding Ninjas (1yr exp, Ruby on Rails, Angular, PostgreSQL, AWS)
+Target: {job_title} role at {company}
 
-From: Harsh Garg, Software Developer at Coding Ninjas (1 year exp, Ruby on Rails, Angular, PostgreSQL, AWS)
-To: {contact.name}, {contact.title}
-Company: {company}
-Job: {job_title}
-Connection: {context}
+Generate messages for these 5 scenarios:
+1. To a college alumni (Chitkara University) at {company}
+2. To an ex-Coding Ninjas colleague now at {company}
+3. To a random employee at {company}
+4. To a software engineer at {company}
+5. To a recruiter/HR at {company}
 
 Rules:
-- Under 200 characters (LinkedIn limit for connection requests)
-- Be genuine, not salesy
-- Mention the specific role
-- If alumni/ex-colleague, mention that connection
-- Don't use "I hope this finds you well"
+- Each message MUST be under 200 characters
+- Be genuine and specific
+- Mention the role
+- For alumni/ex-colleague, reference the shared connection
 
-Return ONLY the message text, nothing else."""
+Return ONLY a JSON array of 5 strings: ["msg1", "msg2", "msg3", "msg4", "msg5"]"""
 
     try:
         result = subprocess.run(
             ["claude", "-p", "--output-format", "text"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=30,
+            input=prompt, capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0:
-            msg = result.stdout.strip().strip('"').strip("'")
-            # Ensure under 200 chars
-            if len(msg) > 200:
-                msg = msg[:197] + "..."
-            return msg
+            import json
+            text = result.stdout.strip()
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            messages = json.loads(text)
+            # Trim to 200 chars
+            return [m[:200] for m in messages]
     except Exception:
         pass
 
-    # Fallback message
-    if contact.is_alumni:
-        return f"Hi {contact.name.split()[0]}, fellow Chitkara alum here! I'm interested in the {job_title} role at {company}. Would you be open to referring me?"
-    elif contact.is_same_company:
-        return f"Hi {contact.name.split()[0]}, I'm at Coding Ninjas too! Interested in the {job_title} role at {company}. Could you refer me?"
-    else:
-        return f"Hi {contact.name.split()[0]}, I'm a Software Developer interested in the {job_title} role at {company}. Would love to connect!"
+    # Fallback messages
+    return [
+        f"Hi! Fellow Chitkara alum here. I'm interested in the {job_title} role at {company}. Could you refer me?",
+        f"Hi! I'm at Coding Ninjas and interested in the {job_title} role at {company}. Would you be open to a referral?",
+        f"Hi! I'm a Software Developer interested in the {job_title} role at {company}. Would love to connect!",
+        f"Hi! I'm a dev with Rails/Angular exp, interested in the {job_title} role at {company}. Happy to chat!",
+        f"Hi! I saw the {job_title} opening at {company}. I'm a Software Developer with 1yr exp. Would love to discuss!",
+    ]

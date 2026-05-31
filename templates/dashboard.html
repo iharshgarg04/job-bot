@@ -646,33 +646,31 @@
             loading.style.display = 'none';
             results.style.display = 'block';
 
-            if (data.ok && data.contacts.length > 0) {
-                results.innerHTML = data.contacts.map(c => {
-                    const badge = c.is_alumni ? '<span style="background:#059669;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">Alumni</span>'
-                        : c.is_same_company ? '<span style="background:#2563eb;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">Ex-Colleague</span>'
-                        : c.is_recruiter ? '<span style="background:#d97706;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">Recruiter</span>'
-                        : '<span style="background:#475569;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">Employee</span>';
-
-                    const mutual = c.mutual_connections ? `<span style="color:#94a3b8;font-size:12px;">${c.mutual_connections} mutual</span>` : '';
+            if (data.ok && data.strategies && data.strategies.length > 0) {
+                results.innerHTML = data.strategies.map((s, i) => {
+                    const colors = ['#059669', '#2563eb', '#8b5cf6', '#0891b2', '#d97706'];
+                    const color = colors[i % colors.length];
 
                     return `<div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:16px;margin-bottom:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:start;">
                             <div>
-                                <a href="${c.linkedin_url}" target="_blank" style="color:#38bdf8;font-weight:600;font-size:15px;text-decoration:none;">${c.name}</a>
-                                ${badge} ${mutual}
-                                <div style="color:#94a3b8;font-size:13px;margin-top:4px;">${c.title}</div>
+                                <div style="color:#f1f5f9;font-weight:600;font-size:14px;">
+                                    <span style="background:${color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;margin-right:8px;">${i+1}</span>
+                                    ${s.label}
+                                </div>
+                                <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${s.description}</div>
                             </div>
-                            <a href="${c.linkedin_url}" target="_blank" class="btn btn-primary btn-sm">Connect</a>
+                            <a href="${s.search_url}" target="_blank" class="btn btn-primary btn-sm">Search</a>
                         </div>
                         <div style="margin-top:12px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;">
-                            <div style="color:#64748b;font-size:11px;margin-bottom:4px;">COPY THIS MESSAGE:</div>
-                            <div style="color:#e2e8f0;font-size:13px;line-height:1.5;" id="msg-${c.name.replace(/\s/g,'')}">${c.message}</div>
-                            <button onclick="copyMessage('msg-${c.name.replace(/\\s/g,'')}')" class="btn btn-outline btn-sm" style="margin-top:8px;font-size:11px;">Copy Message</button>
+                            <div style="color:#64748b;font-size:11px;margin-bottom:4px;">MESSAGE TO COPY:</div>
+                            <div style="color:#e2e8f0;font-size:13px;line-height:1.5;" id="ref-msg-${i}">${s.message}</div>
+                            <button onclick="copyMessage('ref-msg-${i}')" class="btn btn-outline btn-sm" style="margin-top:8px;font-size:11px;">Copy Message</button>
                         </div>
                     </div>`;
                 }).join('');
             } else {
-                results.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;">No contacts found at this company. Try searching manually on LinkedIn.</div>';
+                results.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;">Could not generate referral strategies.</div>';
             }
         }
 

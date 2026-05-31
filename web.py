@@ -266,34 +266,16 @@ def scan_jobs():
 
 @app.route("/api/jobs/<int:idx>/referrals", methods=["POST"])
 def find_job_referrals(idx):
-    """Find referral contacts at a company for a specific job."""
+    """Get referral search links and messages for a specific job."""
     if not (0 <= idx < len(job_store)):
         return jsonify({"ok": False, "error": "Invalid index"}), 400
 
     job = job_store[idx]
 
     try:
-        loop = asyncio.new_event_loop()
-
-        async def _find():
-            from playwright.async_api import async_playwright
-            from scrapers.browser import launch_browser, close_browser
-            from referral import find_referrals
-
-            async with async_playwright() as p:
-                browser = await launch_browser(p)
-                page = browser.pages[0] if browser.pages else await browser.new_page()
-                await page.add_init_script('Object.defineProperty(navigator, "webdriver", {get: () => undefined})')
-
-                try:
-                    contacts = await find_referrals(page, job.company, job.title)
-                    return [c.to_dict() for c in contacts]
-                finally:
-                    await close_browser(browser)
-
-        contacts = loop.run_until_complete(_find())
-        loop.close()
-        return jsonify({"ok": True, "contacts": contacts})
+        from referral import get_referral_strategies
+        strategies = get_referral_strategies(job.company, job.title)
+        return jsonify({"ok": True, "strategies": strategies})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
