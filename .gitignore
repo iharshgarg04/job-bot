@@ -2,6 +2,7 @@
 .browser-data-instahyre/
 .chrome-profile/
 .env
+venv/
 __pycache__/
 *.pyc
 matched_jobs.json
